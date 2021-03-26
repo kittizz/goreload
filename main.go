@@ -167,7 +167,7 @@ func scanChangesFswatch(watchPath string, excludeDirs map[string]bool, allFiles 
 	debouncedCallback := newDebounce(cb, 100*time.Millisecond)
 	for {
 		func() {
-			cmd := exec.Command("fswatch", "-r", watchPath)
+			cmd := exec.Command("fswatch", "-r", "--event=Created", "--event=Updated", "--event=Removed", watchPath)
 			p, err := cmd.StdoutPipe()
 			if err != nil {
 				return
@@ -187,7 +187,6 @@ func scanChangesFswatch(watchPath string, excludeDirs map[string]bool, allFiles 
 			for {
 				pathBytes, _, err := r.ReadLine()
 				if err != nil {
-					log.Println(err)
 					break
 				}
 				path := string(pathBytes)
