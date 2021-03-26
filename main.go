@@ -1,26 +1,30 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
-	"github.com/acoshift/goreload/internal"
 	"github.com/mattn/go-shellwords"
 	"github.com/urfave/cli/v2"
+
+	"github.com/acoshift/goreload/internal"
 )
 
 var (
-	startTime  = time.Now()
-	logger     = log.New(os.Stdout, "[goreload] ", 0)
-	colorGreen = string([]byte{27, 91, 57, 55, 59, 51, 50, 59, 49, 109})
-	colorRed   = string([]byte{27, 91, 57, 55, 59, 51, 49, 59, 49, 109})
-	colorReset = string([]byte{27, 91, 48, 109})
+	startTime   = time.Now()
+	logger      = log.New(os.Stdout, "[goreload] ", 0)
+	colorGreen  = string([]byte{27, 91, 57, 55, 59, 51, 50, 59, 49, 109})
+	colorYellow = string([]byte{27, 91, 57, 55, 59, 51, 51, 59, 49, 109})
+	colorRed    = string([]byte{27, 91, 57, 55, 59, 51, 49, 59, 49, 109})
+	colorReset  = string([]byte{27, 91, 48, 109})
 )
 
 func main() {
@@ -91,6 +95,11 @@ func mainAction(c *cli.Context) error {
 		return err
 	}
 
+	excludeDir := make(map[string]bool)
+	for _, x := range c.StringSlice("excludeDir") {
+		excludeDir[x] = true
+	}
+
 	buildArgs, err := shellwords.Parse(c.String("buildArgs"))
 	if err != nil {
 		return err
@@ -106,43 +115,51 @@ func mainAction(c *cli.Context) error {
 
 	shutdown(runner)
 
-	// build right now
-	build(builder, runner)
-
-	// scan for changes
-	scanChanges(c.String("path"), c.StringSlice("excludeDir"), all, func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	buildAndRun(ctx, builder, runner)
+	scanChanges(c.String("path"), excludeDir, all, func() {
+		cancel()
 		runner.Kill()
-		build(builder, runner)
+		ctx, cancel = context.WithCancel(context.Background())
+		go buildAndRun(ctx, builder, runner)
 	})
 
 	return nil
 }
 
-func build(builder internal.Builder, runner internal.Runner) {
+var lockBuildAndRun sync.Mutex
+
+func buildAndRun(ctx context.Context, builder *internal.Builder, runner *internal.Runner) {
+	// allow only single buildAndRun at anytime
+	lockBuildAndRun.Lock()
+	defer lockBuildAndRun.Unlock()
+
 	logger.Println("Building...")
 
-	err := builder.Build()
+	err := builder.Build(ctx)
+	if err == context.Canceled {
+		logger.Printf("%sBuild canceled%s\n", colorYellow, colorReset)
+		return
+	}
 	if err != nil {
 		logger.Printf("%sBuild failed%s\n", colorRed, colorReset)
-		fmt.Println(builder.Errors())
-	} else {
-		logger.Printf("%sBuild finished%s\n", colorGreen, colorReset)
-		runner.Run()
+		fmt.Println(err)
+		return
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	logger.Printf("%sBuild finished%s\n", colorGreen, colorReset)
+	runner.Run()
 }
 
-func scanChanges(watchPath string, excludeDirs []string, allFiles bool, cb func()) {
+func scanChanges(watchPath string, excludeDirs map[string]bool, allFiles bool, cb func()) {
+	var errDone = errors.New("done")
 	for {
 		filepath.Walk(watchPath, func(path string, info os.FileInfo, err error) error {
 			if path == ".git" && info.IsDir() {
 				return filepath.SkipDir
 			}
-			for _, x := range excludeDirs {
-				if x == path {
-					return filepath.SkipDir
-				}
+			if excludeDirs[path] {
+				return filepath.SkipDir
 			}
 
 			// ignore hidden files
@@ -153,7 +170,7 @@ func scanChanges(watchPath string, excludeDirs []string, allFiles bool, cb func(
 			if (allFiles || filepath.Ext(path) == ".go") && info.ModTime().After(startTime) {
 				cb()
 				startTime = time.Now()
-				return errors.New("done")
+				return errDone
 			}
 
 			return nil
@@ -162,7 +179,7 @@ func scanChanges(watchPath string, excludeDirs []string, allFiles bool, cb func(
 	}
 }
 
-func shutdown(runner internal.Runner) {
+func shutdown(runner *internal.Runner) {
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {

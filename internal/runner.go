@@ -7,41 +7,38 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 	"time"
 )
 
-// Runner interface
-type Runner interface {
-	Run() (*exec.Cmd, error)
-	Info() (os.FileInfo, error)
-	SetWriter(io.Writer)
-	Kill() error
-}
-
-type runner struct {
+type Runner struct {
+	lock      sync.Mutex
 	bin       string
 	args      []string
 	writer    io.Writer
 	command   *exec.Cmd
-	starttime time.Time
+	startTime time.Time
 }
 
 // NewRunner creates new runner
-func NewRunner(bin string, args ...string) Runner {
-	return &runner{
+func NewRunner(bin string, args ...string) *Runner {
+	return &Runner{
 		bin:       bin,
 		args:      args,
 		writer:    ioutil.Discard,
-		starttime: time.Now(),
+		startTime: time.Now(),
 	}
 }
 
-func (r *runner) Run() (*exec.Cmd, error) {
+func (r *Runner) Run() (*exec.Cmd, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
 	if r.needsRefresh() {
-		r.Kill()
+		r.killLocked()
 	}
 
-	if r.command == nil || r.Exited() {
+	if r.command == nil || r.exited() {
 		err := r.runBin()
 		if err != nil {
 			log.Print("Error running: ", err)
@@ -52,15 +49,21 @@ func (r *runner) Run() (*exec.Cmd, error) {
 	return r.command, nil
 }
 
-func (r *runner) Info() (os.FileInfo, error) {
+func (r *Runner) Info() (os.FileInfo, error) {
 	return os.Stat(r.bin)
 }
 
-func (r *runner) SetWriter(writer io.Writer) {
+func (r *Runner) SetWriter(writer io.Writer) {
 	r.writer = writer
 }
 
-func (r *runner) Kill() error {
+func (r *Runner) Kill() error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	return r.killLocked()
+}
+
+func (r *Runner) killLocked() error {
 	if r.command == nil {
 		return nil
 	}
@@ -76,7 +79,8 @@ func (r *runner) Kill() error {
 
 	// trying a "soft" kill first
 	if runtime.GOOS == "windows" {
-		if err := r.command.Process.Kill(); err != nil {
+		err := r.command.Process.Kill()
+		if err != nil {
 			return err
 		}
 	} else {
@@ -99,11 +103,11 @@ func (r *runner) Kill() error {
 	return nil
 }
 
-func (r *runner) Exited() bool {
+func (r *Runner) exited() bool {
 	return r.command != nil && r.command.ProcessState != nil && r.command.ProcessState.Exited()
 }
 
-func (r *runner) runBin() error {
+func (r *Runner) runBin() error {
 	r.command = exec.Command(r.bin, r.args...)
 	stdout, err := r.command.StdoutPipe()
 	if err != nil {
@@ -119,7 +123,7 @@ func (r *runner) runBin() error {
 		return err
 	}
 
-	r.starttime = time.Now()
+	r.startTime = time.Now()
 
 	go io.Copy(r.writer, stdout)
 	go io.Copy(r.writer, stderr)
@@ -128,10 +132,10 @@ func (r *runner) runBin() error {
 	return nil
 }
 
-func (r *runner) needsRefresh() bool {
+func (r *Runner) needsRefresh() bool {
 	info, err := r.Info()
 	if err != nil {
 		return false
 	}
-	return info.ModTime().After(r.starttime)
+	return info.ModTime().After(r.startTime)
 }

@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -8,23 +10,15 @@ import (
 	"strings"
 )
 
-// Builder interface
-type Builder interface {
-	Build() error
-	Binary() string
-	Errors() string
-}
-
-type builder struct {
+type Builder struct {
 	dir       string
 	binary    string
-	errors    string
 	wd        string
 	buildArgs []string
 }
 
 // NewBuilder creates new builder
-func NewBuilder(dir string, bin string, wd string, buildArgs []string) Builder {
+func NewBuilder(dir string, bin string, wd string, buildArgs []string) *Builder {
 	if len(bin) == 0 {
 		bin = "bin"
 	}
@@ -42,33 +36,36 @@ func NewBuilder(dir string, bin string, wd string, buildArgs []string) Builder {
 		dir = filepath.Join(wd, dir)
 	}
 
-	return &builder{dir: dir, binary: bin, wd: wd, buildArgs: buildArgs}
+	return &Builder{dir: dir, binary: bin, wd: wd, buildArgs: buildArgs}
 }
 
-func (b *builder) Binary() string {
+func (b *Builder) Binary() string {
 	return b.binary
 }
 
-func (b *builder) Errors() string {
-	return b.errors
-}
-
-func (b *builder) Build() error {
+func (b *Builder) Build(ctx context.Context) error {
 	args := append([]string{"go", "build", "-o", filepath.Join(b.wd, b.binary)}, b.buildArgs...)
 	args = append(args, b.dir)
 
-	command := exec.Command(args[0], args[1:]...)
+	var buf bytes.Buffer
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
 
-	output, err := command.CombinedOutput()
-	if command.ProcessState.Success() {
-		b.errors = ""
-	} else {
-		b.errors = string(output) + err.Error()
+	result := make(chan error, 1)
+	go func() {
+		err := cmd.Run()
+		if err != nil {
+			err = fmt.Errorf(string(buf.Bytes()) + err.Error())
+		}
+		result <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+		cmd.Process.Kill()
+		return ctx.Err()
+	case err := <-result:
+		return err
 	}
-
-	if len(b.errors) > 0 {
-		return fmt.Errorf(b.errors)
-	}
-
-	return err
 }
