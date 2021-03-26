@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,7 +22,6 @@ import (
 )
 
 var (
-	startTime   = time.Now()
 	logger      = log.New(os.Stdout, "[goreload] ", 0)
 	colorGreen  = string([]byte{27, 91, 57, 55, 59, 51, 50, 59, 49, 109})
 	colorYellow = string([]byte{27, 91, 57, 55, 59, 51, 51, 59, 49, 109})
@@ -152,6 +154,64 @@ func buildAndRun(ctx context.Context, builder *internal.Builder, runner *interna
 }
 
 func scanChanges(watchPath string, excludeDirs map[string]bool, allFiles bool, cb func()) {
+	scanChangesFswatch(watchPath, excludeDirs, allFiles, cb)
+	scanChangesWalk(watchPath, excludeDirs, allFiles, cb)
+}
+
+func scanChangesFswatch(watchPath string, excludeDirs map[string]bool, allFiles bool, cb func()) {
+	curDir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	curDir += "/"
+	debouncedCallback := newDebounce(cb, 100*time.Millisecond)
+	for {
+		func() {
+			cmd := exec.Command("fswatch", "-r", watchPath)
+			p, err := cmd.StdoutPipe()
+			if err != nil {
+				return
+			}
+			err = cmd.Start()
+			if err != nil {
+				// fswatch not found, or can not start
+				return
+			}
+			defer func() {
+				if cmd.Process != nil {
+					cmd.Process.Kill()
+				}
+			}()
+
+			r := bufio.NewReader(p)
+			for {
+				pathBytes, _, err := r.ReadLine()
+				if err != nil {
+					log.Println(err)
+					break
+				}
+				path := string(pathBytes)
+				path = strings.TrimPrefix(path, curDir)
+
+				if path == ".git" {
+					continue
+				}
+				if excludeDirs[path] {
+					continue
+				}
+				if filepath.Base(path)[0] == '.' {
+					continue
+				}
+
+				debouncedCallback.Call()
+			}
+			time.Sleep(300 * time.Millisecond)
+		}()
+	}
+}
+
+func scanChangesWalk(watchPath string, excludeDirs map[string]bool, allFiles bool, cb func()) {
+	startTime := time.Now()
 	var errDone = errors.New("done")
 	for {
 		filepath.Walk(watchPath, func(path string, info os.FileInfo, err error) error {
@@ -191,4 +251,32 @@ func shutdown(runner *internal.Runner) {
 		}
 		os.Exit(1)
 	}()
+}
+
+type debounce struct {
+	mu sync.Mutex
+	t  *time.Timer
+	f  func()
+	d  time.Duration
+}
+
+func newDebounce(f func(), d time.Duration) *debounce {
+	return &debounce{
+		f: f,
+		d: d,
+	}
+}
+
+func (d *debounce) Call() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.t == nil {
+		d.f()
+		d.t = time.AfterFunc(0, func() {})
+		return
+	}
+
+	d.t.Stop()
+	d.t = time.AfterFunc(d.d, d.f)
 }

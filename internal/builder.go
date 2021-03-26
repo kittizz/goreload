@@ -63,7 +63,9 @@ func (b *Builder) Build(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		cmd.Process.Kill()
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
 		return ctx.Err()
 	case err := <-result:
 		return err
