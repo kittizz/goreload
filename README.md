@@ -12,6 +12,14 @@ detects a change.
 go get -u github.com/acoshift/goreload
 ```
 
+### Optional
+
+Use [fswatch](https://github.com/emcrisostomo/fswatch)
+
+```shell
+brew install fswatch
+```
+
 ## Basic usage
 
 ```shell
