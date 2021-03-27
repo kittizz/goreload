@@ -97,11 +97,6 @@ func mainAction(c *cli.Context) error {
 		return err
 	}
 
-	excludeDir := make(map[string]bool)
-	for _, x := range c.StringSlice("excludeDir") {
-		excludeDir[x] = true
-	}
-
 	buildArgs, err := shellwords.Parse(c.String("buildArgs"))
 	if err != nil {
 		return err
@@ -119,7 +114,7 @@ func mainAction(c *cli.Context) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	buildAndRun(ctx, builder, runner)
-	scanChanges(c.String("path"), excludeDir, all, func() {
+	scanChanges(c.String("path"), c.StringSlice("excludeDir"), all, func() {
 		cancel()
 		runner.Kill()
 		ctx, cancel = context.WithCancel(context.Background())
@@ -153,21 +148,29 @@ func buildAndRun(ctx context.Context, builder *internal.Builder, runner *interna
 	runner.Run()
 }
 
-func scanChanges(watchPath string, excludeDirs map[string]bool, allFiles bool, cb func()) {
+func scanChanges(watchPath string, excludeDirs []string, allFiles bool, cb func()) {
 	scanChangesFswatch(watchPath, excludeDirs, allFiles, cb)
 	scanChangesWalk(watchPath, excludeDirs, allFiles, cb)
 }
 
-func scanChangesFswatch(watchPath string, excludeDirs map[string]bool, allFiles bool, cb func()) {
+func scanChangesFswatch(watchPath string, excludeDirs []string, allFiles bool, cb func()) {
 	curDir, err := os.Getwd()
 	if err != nil {
 		return
 	}
 	curDir += "/"
 	debouncedCallback := newDebounce(cb, 100*time.Millisecond)
+
+	// always retry when fswatch exit
 	for {
 		func() {
-			cmd := exec.Command("fswatch", "-r", "--event=Created", "--event=Updated", "--event=Removed", watchPath)
+			cmd := exec.Command("fswatch",
+				"-r",
+				"--event=Created",
+				"--event=Updated",
+				"--event=Removed",
+				watchPath,
+			)
 			p, err := cmd.StdoutPipe()
 			if err != nil {
 				return
@@ -192,24 +195,42 @@ func scanChangesFswatch(watchPath string, excludeDirs map[string]bool, allFiles 
 				path := string(pathBytes)
 				path = strings.TrimPrefix(path, curDir)
 
-				if path == ".git" {
+				if strings.HasPrefix(path, ".git/") {
 					continue
 				}
-				if excludeDirs[path] {
-					continue
+				{
+					skip := false
+					for _, x := range excludeDirs {
+						if strings.HasPrefix(path, x) {
+							skip = true
+							break
+						}
+					}
+					if skip {
+						continue
+					}
 				}
 				if filepath.Base(path)[0] == '.' {
 					continue
 				}
 
+				if !(allFiles || filepath.Ext(path) == ".go") {
+					continue
+				}
+
 				debouncedCallback.Call()
 			}
-			time.Sleep(300 * time.Millisecond)
 		}()
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
-func scanChangesWalk(watchPath string, excludeDirs map[string]bool, allFiles bool, cb func()) {
+func scanChangesWalk(watchPath string, excludeDirs []string, allFiles bool, cb func()) {
+	excludeDir := make(map[string]bool)
+	for _, x := range excludeDirs {
+		excludeDir[x] = true
+	}
+
 	startTime := time.Now()
 	var errDone = errors.New("done")
 	for {
@@ -217,7 +238,7 @@ func scanChangesWalk(watchPath string, excludeDirs map[string]bool, allFiles boo
 			if path == ".git" && info.IsDir() {
 				return filepath.SkipDir
 			}
-			if excludeDirs[path] {
+			if excludeDir[path] {
 				return filepath.SkipDir
 			}
 
