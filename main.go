@@ -154,6 +154,7 @@ func scanChanges(watchPath string, excludeDirs []string, allFiles bool, cb func(
 }
 
 func scanChangesFswatch(watchPath string, excludeDirs []string, allFiles bool, cb func()) {
+	exit := false
 	curDir, err := os.Getwd()
 	if err != nil {
 		return
@@ -178,6 +179,7 @@ func scanChangesFswatch(watchPath string, excludeDirs []string, allFiles bool, c
 			err = cmd.Start()
 			if err != nil {
 				// fswatch not found, or can not start
+				exit = true
 				return
 			}
 			defer func() {
@@ -221,6 +223,9 @@ func scanChangesFswatch(watchPath string, excludeDirs []string, allFiles bool, c
 				debouncedCallback.Call()
 			}
 		}()
+		if exit {
+			return
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 }
