@@ -9,12 +9,12 @@ detects a change.
 ## Installation
 
 ```shell
-go get -u github.com/acoshift/goreload
+go install github.com/acoshift/goreload@master
 ```
 
-### Optional
+### macOS
 
-Use [fswatch](https://github.com/emcrisostomo/fswatch)
+**Optional** Use [fswatch](https://github.com/emcrisostomo/fswatch)
 
 ```shell
 brew install fswatch

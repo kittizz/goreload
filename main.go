@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -154,6 +155,10 @@ func scanChanges(watchPath string, excludeDirs []string, allFiles bool, cb func(
 }
 
 func scanChangesFswatch(watchPath string, excludeDirs []string, allFiles bool, cb func()) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+
 	exit := false
 	curDir, err := os.Getwd()
 	if err != nil {
