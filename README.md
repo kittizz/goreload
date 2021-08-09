@@ -38,5 +38,5 @@ Options
    --logPrefix value             Setup custom log prefix
    --help, -h                    show help
    --version, -v                 print the version
-   --signal, -s                  kill by signal code (defaults: "SIGKILL" | "Interrupt", "SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT")
+   --signal, -s                  kill by signal code : SIGKILL, Interrupt, SIGTERM, SIGINT, SIGHUP, SIGQUIT (default: "SIGKILL")
 ```
