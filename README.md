@@ -1,6 +1,6 @@
 # Goreload
 
-`goreload` forks from codegangsta/gin and remove unused features.
+`goreload` forks from acoshift/goreload and add features kill signal.
 
 Just run `goreload` in your app directory.
 `goreload` will automatically recompile your code when it
@@ -9,7 +9,7 @@ detects a change.
 ## Installation
 
 ```shell
-go install github.com/acoshift/goreload@master
+go install github.com/kittizz/goreload@master
 ```
 
 ### macOS
@@ -38,4 +38,5 @@ Options
    --logPrefix value             Setup custom log prefix
    --help, -h                    show help
    --version, -v                 print the version
+   --signal, -s                  kill by signal code (defaults: "SIGKILL" | "Interrupt", "SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT")
 ```
