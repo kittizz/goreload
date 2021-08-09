@@ -8,12 +8,14 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type Runner struct {
 	lock      sync.Mutex
 	bin       string
+	signal    string
 	args      []string
 	writer    io.Writer
 	command   *exec.Cmd
@@ -21,9 +23,10 @@ type Runner struct {
 }
 
 // NewRunner creates new runner
-func NewRunner(bin string, args ...string) *Runner {
+func NewRunner(bin string, signal string, args ...string) *Runner {
 	return &Runner{
 		bin:       bin,
+		signal:    signal,
 		args:      args,
 		writer:    ioutil.Discard,
 		startTime: time.Now(),
@@ -78,13 +81,18 @@ func (r *Runner) killLocked() error {
 	}()
 
 	// trying a "soft" kill first
+
+	sig := r.getSignal()
 	if runtime.GOOS == "windows" {
-		err := r.command.Process.Kill()
+		err := r.command.Process.Signal(sig)
 		if err != nil {
 			return err
 		}
 	} else {
-		err := r.command.Process.Signal(os.Interrupt)
+		if sig == syscall.SIGKILL {
+			sig = os.Interrupt
+		}
+		err := r.command.Process.Signal(sig)
 		if err != nil {
 			return err
 		}
@@ -138,4 +146,25 @@ func (r *Runner) needsRefresh() bool {
 		return false
 	}
 	return info.ModTime().After(r.startTime)
+}
+func (r *Runner) getSignal() os.Signal {
+	var sig os.Signal
+	switch r.signal {
+	case "SIGKILL":
+		sig = syscall.SIGKILL
+	case "Interrupt":
+		sig = os.Interrupt
+	case "SIGTERM":
+		sig = syscall.SIGTERM
+	case "SIGINT":
+		sig = syscall.SIGINT
+	case "SIGHUP":
+		sig = syscall.SIGHUP
+	case "SIGQUIT":
+		sig = syscall.SIGQUIT
+	default:
+		sig = syscall.SIGKILL
+	}
+
+	return sig
 }

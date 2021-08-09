@@ -19,7 +19,7 @@ import (
 	"github.com/mattn/go-shellwords"
 	"github.com/urfave/cli/v2"
 
-	"github.com/acoshift/goreload/internal"
+	"github.com/kittizz/goreload/internal"
 )
 
 var (
@@ -73,6 +73,12 @@ func main() {
 			Usage: "Log prefix",
 			Value: "goreload",
 		},
+		&cli.StringFlag{
+			Name:    "signal",
+			Aliases: []string{"s"},
+			Value:   "SIGKILL",
+			Usage:   "kill by signal code : SIGKILL, Interrupt, SIGTERM, SIGINT, SIGHUP, SIGQUIT",
+		},
 	}
 	app.Commands = []*cli.Command{
 		{
@@ -108,7 +114,7 @@ func mainAction(c *cli.Context) error {
 		buildPath = c.String("path")
 	}
 	builder := internal.NewBuilder(buildPath, c.String("bin"), wd, buildArgs)
-	runner := internal.NewRunner(filepath.Join(wd, builder.Binary()), c.Args().Slice()...)
+	runner := internal.NewRunner(filepath.Join(wd, builder.Binary()), c.String("signal"), c.Args().Slice()...)
 	runner.SetWriter(os.Stdout)
 
 	shutdown(runner)
